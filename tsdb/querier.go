@@ -868,12 +868,6 @@ func (p *populateWithDelChunkSeriesIterator) Next() bool {
 		return true
 	}
 
-	// If there are no chunks left from the ones generated from the deletion
-	// iterator, reset the chunks slice and move to the next chunk/deletion
-	// iterator.
-	p.chunksFromDelIter = p.chunksFromDelIter[:0]
-	p.chunksFromDelIterIdx = -1
-
 	if !p.next(true) {
 		return false
 	}
@@ -890,30 +884,43 @@ func (p *populateWithDelChunkSeriesIterator) Next() bool {
 	// We need to iterate through the samples in that iterator to create new
 	// chunks (and then iterate through those chunks when Next() is called
 	// again).
-	err := p.populateChunksFromDelIter()
+	//TODO: if still perf issues, move these two lines into the function
+	p.chunksFromDelIter = p.chunksFromDelIter[:0]
+	p.chunksFromDelIterIdx = -1
+	// Also reset chunk
+	p.currMetaWithChunk.Chunk = nil
+
+	err := p.readDelIter()
 	if err != nil {
 		p.err = err
 		return false
+	}
+
+	// if single chunk
+	if p.currMetaWithChunk.Chunk != nil {
+		return true
 	}
 
 	if len(p.chunksFromDelIter) == 0 {
 		return false
 	}
 
+	// Otherwise multiple chunks, need to read from iterator
 	// Advance to first chunk generated from the deletion iterator.
 	p.chunksFromDelIterIdx = 0
 	p.currMetaWithChunk = p.chunksFromDelIter[0]
 	return true
 }
 
-// populateChunksFromDelIter reads the samples from currDelIter to create
+// readDelIter reads the samples from currDelIter to create
 // chunks for chunksFromDelIter. It is assumed that chunksFromDelIter is reset
-// to a zero-length slice before this function is called.
-func (p *populateWithDelChunkSeriesIterator) populateChunksFromDelIter() error {
+// to a zero-length slice before this function is called. And p.currMetaWithChunk is nil
+// Or sets currMetaWithChunk directly
+func (p *populateWithDelChunkSeriesIterator) readDelIter() error {
 	firstValueType := p.currDelIter.Next()
 	if firstValueType == chunkenc.ValNone {
 		if err := p.currDelIter.Err(); err != nil {
-			return errors.Wrap(err, "populateChunksFromDelIter: no samples could be read")
+			return errors.Wrap(err, "readDelIter: no samples could be read")
 		}
 		return nil
 	}
@@ -942,7 +949,7 @@ func (p *populateWithDelChunkSeriesIterator) populateChunksFromDelIter() error {
 		// For the first sample, the following condition will always be true as
 		// ValNoneNone != ValFloat | ValHistogram | ValFloatHistogram.
 		if currentValueType != prevValueType {
-			if prevValueType != chunkenc.ValNone {
+			if prevValueType != chunkenc.ValNone { // new chunk, different encoding => two or more chunks are created, so can't set currMetaWithChunk.Chunk directly
 				p.chunksFromDelIter = append(p.chunksFromDelIter, chunks.Meta{Chunk: currentChunk, MinTime: cmint, MaxTime: cmaxt})
 			}
 			cmint = p.currDelIter.AtT()
@@ -984,7 +991,7 @@ func (p *populateWithDelChunkSeriesIterator) populateChunksFromDelIter() error {
 		}
 
 		if newChunk != nil {
-			if !recoded {
+			if !recoded { //new chunk, same encoding => two or more chunks are created, so can't set currMetaWithChunk.Chunk directly
 				p.chunksFromDelIter = append(p.chunksFromDelIter, chunks.Meta{Chunk: currentChunk, MinTime: cmint, MaxTime: cmaxt})
 			}
 			currentChunk = newChunk
@@ -996,14 +1003,23 @@ func (p *populateWithDelChunkSeriesIterator) populateChunksFromDelIter() error {
 	}
 
 	if err != nil {
-		return errors.Wrap(err, "populateChunksFromDelIter: error when writing new chunks")
+		return errors.Wrap(err, "readDelIter: error when writing new chunks")
 	}
 	if err = p.currDelIter.Err(); err != nil {
-		return errors.Wrap(err, "populateChunksFromDelIter: currDelIter error when writing new chunks")
+		return errors.Wrap(err, "readDelIter: currDelIter error when writing new chunks")
 	}
 
+	// Append the final chunk.
 	if prevValueType != chunkenc.ValNone {
-		p.chunksFromDelIter = append(p.chunksFromDelIter, chunks.Meta{Chunk: currentChunk, MinTime: cmint, MaxTime: cmaxt})
+		// If chunksFromDelIter doesn't have any chunks already, only a single chunk has been created.
+		if len(p.chunksFromDelIter) == 0 {
+			p.currMetaWithChunk.Chunk = currentChunk
+			p.currMetaWithChunk.MinTime = cmint
+			p.currMetaWithChunk.MaxTime = cmaxt
+		} else {
+			// Otherwise multiple chunks have been created. Append to the list of chunks.
+			p.chunksFromDelIter = append(p.chunksFromDelIter, chunks.Meta{Chunk: currentChunk, MinTime: cmint, MaxTime: cmaxt})
+		}
 	}
 
 	return nil
