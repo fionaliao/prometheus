@@ -31,6 +31,8 @@ import (
 	"github.com/grafana/regexp"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/util/strutil"
@@ -180,8 +182,11 @@ func NewTemplateExpander(
 			"safeHtml": func(text string) html_template.HTML {
 				return html_template.HTML(text)
 			},
-			"match":     regexp.MatchString,
-			"title":     strings.Title,
+			"match": regexp.MatchString,
+			"title": func(str string) string {
+				caser := cases.Title(language.English)
+				return caser.String(str)
+			},
 			"toUpper":   strings.ToUpper,
 			"toLower":   strings.ToLower,
 			"graphLink": strutil.GraphLinkForExpression,
