@@ -1,0 +1,38 @@
+# Test native histograms
+load 1m
+    test_histogram {{schema:0 count:25 sum:1234.5 z_bucket:4 z_bucket_w:0.001 buckets:[1 2 0 1 1] n_buckets:[2 4 0 0 1 9]}} {{schema:0 count:41 sum:2345.6 z_bucket:5 z_bucket_w:0.001 buckets:[1 3 1 2 1 1 1] n_buckets:[0 1 4 2 7 0 0 0 0 5 5 2]}} {{schema:0 count:41 sum:1111.1 z_bucket:5 z_bucket_w:0.001 buckets:[1 3 1 2 1 1 1] n_buckets:[0 1 4 2 7 0 0 0 0 5 5 2]}} {{schema:1 count:0}}
+    test_float{v="v1"} 42.0x4
+    test_float{v="v2"} 12.0x4
+    test_float_no_label 42.0x4
+
+eval instant at 3m 1 / histogram_quantile(.1, sum(rate(test_histogram[3m])))
+    {} -0.001236155063291139
+
+eval instant at 3m sum(test_float) / histogram_quantile(.1, sum(rate(test_histogram[3m])))
+    {} -0.06675237341772151
+
+eval instant at 3m sum(test_float_no_label) / histogram_quantile(.1, sum(rate(test_histogram[3m])))
+    {} -0.05191851265822785
+
+eval instant at 3m test_float_no_label / histogram_quantile(.1, sum(rate(test_histogram[3m])))
+    {} -0.05191851265822785
+
+eval instant at 3m sum(test_float{v="v1"}) / histogram_quantile(.1, sum(rate(test_histogram[3m])))
+    {} -0.05191851265822785
+
+eval instant at 3m test_float{v="v1"} / ignoring (v) histogram_quantile(.1, sum(rate(test_histogram[3m])))
+    {} -0.05191851265822785
+
+eval instant at 3m test_float_no_label / sum(test_float)
+    {} 0.7777777777777778
+
+eval instant at 3m test_float{v="v1"} / ignoring (v) sum(test_float)
+    {} 0.7777777777777778
+
+eval instant at 3m test_float{v="v1"} / sum(test_float)  # this errors and returns no results as the labels for the instant vectors don't match
+    {v="v1"} 0
+
+eval instant at 3m test_float{v="v1"} / histogram_quantile(.1, sum(rate(test_histogram[3m]))) # this errors and returns no results as the labels for the instant vectors don't match
+    {v="v1"} 0
+
+clear
