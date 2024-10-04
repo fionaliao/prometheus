@@ -90,7 +90,18 @@ TODO: split the spans and bucket parts to make this more readable?
 
 ### Float histogram sample records
 
-TODO
+Float histogram records encode histogram samples as a list of triples `(series_id, timestamp, value)`.
+Series reference and timestamp are encoded as deltas w.r.t the first sample.
+The first row stores the starting id and the starting timestamp.
+The first float histogram sample record begins at the second row.
+
+```
+type = 8 <1b>
+
+id <8b> | timestamp <8b>
+id_delta <varint> | timestamp_delta <varint> | counter_reset_hint <1b> |  schema <varint> | zero_threshold <float64> | zero_count <float64> | count <float64> | sum <float64> | pos_spans_len <uvarint> | pos_span_0_offset <varint> |  pos_span_0_len <uvarint32> | ... | pos_span_n_offset <varint> |  pos_span_n_len <uvarint32> | neg_spans_len <uvarint> | neg_span_0_offset <varint> |  neg_span_0_len <uvarint32> | ... | neg_span_n_offset <varint> |  neg_span_n_len <uvarint32> | pos_buckets_len <uvarint> | pos_bucket_0 <float64> | ... | pos_bucket_n <float64> | neg_buckets_len <uvarint> | neg_bucket_0 <float64> | ... | neg_bucket_n <float64> 
+
+```
 
 ### Tombstone records
 
