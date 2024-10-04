@@ -58,18 +58,39 @@ The first row stores the starting id and the starting timestamp.
 The first sample record begins at the second row.
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│ type = 2 <1b>                                                    │
-├──────────────────────────────────────────────────────────────────┤
-│ ┌────────────────────┬───────────────────────────┐               │
-│ │ id <8b>            │ timestamp <8b>            │               │
-│ └────────────────────┴───────────────────────────┘               │
-│ ┌────────────────────┬───────────────────────────┬─────────────┐ │
-│ │ id_delta <uvarint> │ timestamp_delta <uvarint> │ value <8b>  │ │
-│ └────────────────────┴───────────────────────────┴─────────────┘ │
-│                              . . .                               │
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│ type = 2 <1b>                                                  │
+├────────────────────────────────────────────────────────────────┤
+│ ┌───────────────────┬──────────────────────────┐               │
+│ │ id <8b>           │ timestamp <8b>           │               │
+│ └───────────────────┴──────────────────────────┘               │
+│ ┌───────────────────┬──────────────────────────┬─────────────┐ │
+│ │ id_delta <varint> │ timestamp_delta <varint> │ value <8b>  │ │
+│ └───────────────────┴──────────────────────────┴─────────────┘ │
+│                              . . .                             │
+└────────────────────────────────────────────────────────────────┘
 ```
+
+### Histogram sample records
+
+Histogram records encode histogram samples as a list of triples `(series_id, timestamp, value)`.
+Series reference and timestamp are encoded as deltas w.r.t the first sample.
+The first row stores the starting id and the starting timestamp.
+The first histogram sample record begins at the second row.
+
+```
+type = 7 <1b>
+
+id <8b> | timestamp <8b>
+id_delta <varint> | timestamp_delta <varint> | counter_reset_hint <1b> |  schema <varint> | zero_threshold <8b> | zero_count <uvarint> | count <uvarint> | sum <8b> | pos_spans_len <uvarint> | pos_span_0_offset <varint> |  pos_span_0_len <uvarint32> | ... | pos_span_n_offset <varint> |  pos_span_n_len <uvarint32> | neg_spans_len <uvarint> | neg_span_0_offset <varint> |  neg_span_0_len <uvarint32> | ... | neg_span_n_offset <varint> |  neg_span_n_len <uvarint32> | pos_buckets_len <uvarint> | pos_bucket_0 <varint> | ... | pos_bucket_n <varint> | neg_buckets_len <uvarint> | neg_bucket_0 <varint> | ... | neg_bucket_n <varint> 
+
+```
+
+TODO: split the spans and bucket parts to make this more readable?
+
+### Float histogram sample records
+
+TODO
 
 ### Tombstone records
 
@@ -112,7 +133,7 @@ See: https://github.com/OpenObservability/OpenMetrics/blob/main/specification/Op
 │ │ len(str_1) <uvarint> │ str_1 <bytes>                         │ │
 │ ├──────────────────────┴───────────────────────────────────────┤ │
 │ │  ...                                                         │ │
-│ ├───────────────────────┬──────────────────────────────────────┤ │
+│ ├───────────────────────┬────────────────┬─────────────────────┤ │
 │ │ len(str_2n) <uvarint> │ str_2n <bytes> │                     │ │
 │ └───────────────────────┴────────────────┴─────────────────────┘ │
 │                              . . .                               │
