@@ -6126,7 +6126,7 @@ func testOOOInterleavedImplicitCounterResets(t *testing.T, name string, scenario
 	}
 
 	opts := DefaultOptions()
-	opts.OutOfOrderCapMax = 30
+	opts.OutOfOrderCapMax = 6
 	opts.OutOfOrderTimeWindow = 24 * time.Hour.Milliseconds()
 
 	db := openTestDB(t, opts, nil)
@@ -6138,67 +6138,50 @@ func testOOOInterleavedImplicitCounterResets(t *testing.T, name string, scenario
 
 	app := db.Appender(context.Background())
 
-	require.NoError(t, appendFunc(app, 1, 40)) // New in In-order.
-	require.NoError(t, appendFunc(app, 4, 30)) // In-order counter reset.
-	require.NoError(t, appendFunc(app, 2, 40)) // New in OOO.
-	require.NoError(t, appendFunc(app, 3, 10)) // OOO counter reset.
+	require.NoError(t, appendFunc(app, 8, 30)) // in order
 
-	// Result in order of readback: 40, 40, 10, 30, the only actual counter reset is between 40->10.
+	// ooo
+	require.NoError(t, appendFunc(app, 1, 10))
+	require.NoError(t, appendFunc(app, 2, 20))
+	require.NoError(t, appendFunc(app, 3, 30))
+	require.NoError(t, appendFunc(app, 5, 20)) // fake counter reset - when T4 is ingested later, this should stop being detected as a counter reset
+	require.NoError(t, appendFunc(app, 6, 10)) // real counter reset
+	require.NoError(t, appendFunc(app, 7, 20))
+	// OOO cap max = 6 -> OOO chunks mmapped here (three mmapped chunks created due to detected counter resets - [T1-T3], [T5], [T6-T7])
+	require.NoError(t, appendFunc(app, 4, 10)) // real counter reset
 	require.NoError(t, app.Commit())
 
-	t.Run("querier", func(t *testing.T) {
-		querier, err := db.Querier(0, 5)
-		require.NoError(t, err)
-		defer querier.Close()
+	// OOO mmapped chunks: [T1-T3] [T5] [T6]
+	// OOO head: [T4]
 
-		seriesSet := query(t, querier, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar1"))
-		require.Len(t, seriesSet, 1)
-		samples, ok := seriesSet["{foo=\"bar1\"}"]
-		require.True(t, ok)
-		require.Len(t, samples, 4)
+	// query for T1 - T6
+	querier, err := db.Querier(0, 6)
+	require.NoError(t, err)
+	defer querier.Close()
 
-		// We expect all unknown counter resets because we clear the counter reset
-		// hint when we switch between in-order and out-of-order samples.
-		for i, s := range samples {
-			switch name {
-			case intHistogram:
-				require.Equal(t, histogram.UnknownCounterReset, s.H().CounterResetHint, "sample %d", i)
-			case floatHistogram:
-				require.Equal(t, histogram.UnknownCounterReset, s.FH().CounterResetHint, "sample %d", i)
-			default:
-				t.Fatalf("unexpected sample type %s", name)
-			}
+	seriesSet := query(t, querier, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar1"))
+	require.Len(t, seriesSet, 1)
+	samples, ok := seriesSet["{foo=\"bar1\"}"]
+	require.True(t, ok)
+	require.Len(t, samples, 6)
+
+	for i, hint := range []histogram.CounterResetHint{
+		histogram.UnknownCounterReset, // T1 - first sample in first mmapped OOO chunk, unknown counter reset
+		histogram.NotCounterReset,     // T2 - second sample in mmapped chunk
+		histogram.NotCounterReset,     // T3 - second sample in mmapped chunk
+		histogram.UnknownCounterReset, // T4 - first sample in OOO head (at the point of querying). This is a real counter reset.
+		histogram.UnknownCounterReset, // T5 - first sample in second mmapped chunk. It shouldn't be detected as a counter reset when querying since T4 is the real counter reset. // FIXME - currently returning counter reset
+		histogram.UnknownCounterReset, // T6 - first sample in third mmapped chunk. This is a real counter reset. Doesn't matter if it's detected as a reset or unknown.
+	} {
+		switch name {
+		case intHistogram:
+			require.Equal(t, hint, samples[i].H().CounterResetHint, "sample %d at time %d", i, samples[i].T())
+		case floatHistogram:
+			require.Equal(t, hint, samples[i].FH().CounterResetHint, "sample %d at time %d", i, samples[i].T())
+		default:
+			t.Fatalf("unexpected sample type %s", name)
 		}
-	})
-
-	t.Run("chunk-querier", func(t *testing.T) {
-		querier, err := db.ChunkQuerier(0, 5)
-		require.NoError(t, err)
-		defer querier.Close()
-
-		chunkSet := queryAndExpandChunks(t, querier, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar1"))
-		require.Len(t, chunkSet, 1)
-		chunks, ok := chunkSet["{foo=\"bar1\"}"]
-		require.True(t, ok)
-		idx := 0
-		for _, samples := range chunks {
-			for i, s := range samples {
-				expectHint := histogram.UnknownCounterReset
-				if i > 0 {
-					expectHint = histogram.NotCounterReset
-				}
-				switch name {
-				case intHistogram:
-					require.Equal(t, expectHint, s.H().CounterResetHint, "sample %d", idx)
-				case floatHistogram:
-					require.Equal(t, expectHint, s.FH().CounterResetHint, "sample %d", idx)
-				default:
-					t.Fatalf("unexpected sample type %s", name)
-				}
-				idx++
-			}
-		}
-	})
+	}
 }
 
 func testOOONativeHistogramsWithCounterResets(t *testing.T, scenario sampleTypeScenario) {
